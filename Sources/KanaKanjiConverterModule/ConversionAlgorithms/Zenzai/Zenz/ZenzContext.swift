@@ -64,6 +64,19 @@ final class ZenzContext {
         model_params.n_gpu_layers = 0
         model_params.split_mode = LLAMA_SPLIT_MODE_NONE
         #endif
+        #if Zenzai && !ZenzaiCPU
+        // llama_model_default_params() の n_gpu_layers は Metal 以外 0 のため、
+        // Windows では全層 CPU 実行になる。AZOOKEY_GPU_LAYERS（正整数, 1...999 に
+        // clamp）で GPU オフロード層数を指定できるようにする。未設定・不正値は
+        // 従来挙動（既定値のまま）を維持する。
+        if let raw = ProcessInfo.processInfo.environment["AZOOKEY_GPU_LAYERS"] {
+            if let layers = Int32(raw), layers > 0 {
+                model_params.n_gpu_layers = min(layers, 999)
+            } else {
+                debug("AZOOKEY_GPU_LAYERS is set but invalid, ignoring: \(raw)")
+            }
+        }
+        #endif
         let model = llama_model_load_from_file(path, model_params)
         guard let model else {
             debug("Could not load model at \(path)")
