@@ -882,12 +882,32 @@ public final class DicdataStore {
 
     /// 動的ユーザ辞書からrubyに等しい語を返す。
     func getMatchDynamicUserDict(_ ruby: some StringProtocol, state: DicdataStoreState) -> [DicdataElement] {
-        state.dynamicUserDictionary.filter {$0.ruby == ruby}
+        state.dynamicUserDictionaryByRuby[String(ruby)] ?? []
     }
 
     /// 動的ユーザ辞書からrubyに先頭一致する語を返す。
     func getPrefixMatchDynamicUserDict(_ ruby: some StringProtocol, state: DicdataStoreState) -> [DicdataElement] {
-        state.dynamicUserDictionary.filter {$0.ruby.hasPrefix(ruby)}
+        let prefix = String(ruby)
+        let rubies = state.dynamicUserDictionarySortedRubies
+        // sorted order keeps every ruby sharing a prefix contiguous: binary
+        // search the first candidate, then walk while the prefix holds
+        var low = 0
+        var high = rubies.count
+        while low < high {
+            let mid = (low + high) / 2
+            if rubies[mid] < prefix {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        var result: [DicdataElement] = []
+        var index = low
+        while index < rubies.count, rubies[index].hasPrefix(prefix) {
+            result.append(contentsOf: state.dynamicUserDictionaryByRuby[rubies[index], default: []])
+            index += 1
+        }
+        return result
     }
 
     private func loadCCLine(_ former: Int) {

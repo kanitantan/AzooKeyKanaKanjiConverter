@@ -8,6 +8,11 @@ package final class DicdataStoreState {
 
     var keyboardLanguage: KeyboardLanguage = .ja_JP
     private(set) var dynamicUserDictionary: [DicdataElement] = []
+    // ruby-keyed index over dynamicUserDictionary: lookups happen per lattice
+    // node, so scanning the whole array does not scale once the dictionary
+    // holds thousands of entries (e.g. an injected emoji dictionary)
+    private(set) var dynamicUserDictionaryByRuby: [String: [DicdataElement]] = [:]
+    private(set) var dynamicUserDictionarySortedRubies: [String] = []
     private(set) var dynamicUserShortcuts: [DicdataElement] = []
     var learningMemoryManager: LearningManager
 
@@ -79,6 +84,8 @@ package final class DicdataStoreState {
         self.dynamicUserDictionary.mutatingForEach {
             $0.metadata = .isFromUserDictionary
         }
+        self.dynamicUserDictionaryByRuby = Dictionary(grouping: self.dynamicUserDictionary, by: {$0.ruby})
+        self.dynamicUserDictionarySortedRubies = self.dynamicUserDictionaryByRuby.keys.sorted()
         self.dynamicUserShortcuts = shortcuts
         self.dynamicUserShortcuts.mutatingForEach {
             $0.metadata = .isFromUserDictionary
