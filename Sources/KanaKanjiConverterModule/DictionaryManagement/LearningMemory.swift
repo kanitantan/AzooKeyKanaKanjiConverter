@@ -182,6 +182,14 @@ struct LongTermLearningMemory {
     }
 
     /// 一時記憶と長期記憶の学習データをマージする
+    /// Identity of a long-term memory entry for forgetting. Matching on the
+    /// word alone (the previous behaviour) also dropped every other reading
+    /// of the same surface, e.g. forgetting (コシツ, 深津) erased (フカツ, 深津).
+    struct ForgetKey: Hashable {
+        let ruby: String
+        let word: String
+    }
+
     static func merge(tempTrie: consuming TemporalLearningMemoryTrie, forgetTargets: [DicdataElement] = [], directoryURL: URL, maxMemoryCount: Int, char2UInt8: [Character: UInt8]) throws {
         // MARK: `.pause`ファイルが存在する場合、`merge`を行う前に`.2`ファイルの復活を試み、失敗した場合は`merge`を諦める。
         if fileExist(pauseFileURL(directoryURL: directoryURL)) {
@@ -211,7 +219,7 @@ struct LongTermLearningMemory {
 
         debug("LongTermLearningMemory merge entryCount", entryCount, ltMetadata.count)
 
-        let forgetTargetWords = Set(forgetTargets.map { $0.word })
+        let forgetTargetKeys = Set(forgetTargets.map { ForgetKey(ruby: $0.ruby, word: $0.word) })
         // それぞれのloudstxt3ファイルに対して処理を行う
         for loudstxtIndex in 0 ..< Int(entryCount) / txtFileSplit + 1 {
             let loudstxtData: Data
@@ -251,8 +259,8 @@ struct LongTermLearningMemory {
                 var newMetadata: [MetadataElement] = []
                 assert(elements.count == metadata.count, "elements count and metadata count must be equal.")
                 for (dicdataElement, metadataElement) in zip(elements, metadata) {
-                    // 忘却対象である場合は弾く（粗いチェック）
-                    if forgetTargetWords.contains(dicdataElement.word) {
+                    // 忘却対象である場合は弾く（読みと表層の両方が一致する項目のみ）
+                    if forgetTargetKeys.contains(ForgetKey(ruby: dicdataElement.ruby, word: dicdataElement.word)) {
                         debug("LongTermLearningMemory merge stopped because it is a forget target", dicdataElement)
                         continue
                     }
