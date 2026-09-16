@@ -181,7 +181,6 @@ struct LongTermLearningMemory {
         }
     }
 
-    /// 一時記憶と長期記憶の学習データをマージする
     /// Identity of a long-term memory entry for forgetting. Matching on the
     /// word alone (the previous behaviour) also dropped every other reading
     /// of the same surface, e.g. forgetting (コシツ, 深津) erased (フカツ, 深津).
@@ -190,6 +189,7 @@ struct LongTermLearningMemory {
         let word: String
     }
 
+    /// 一時記憶と長期記憶の学習データをマージする
     static func merge(tempTrie: consuming TemporalLearningMemoryTrie, forgetTargets: [DicdataElement] = [], directoryURL: URL, maxMemoryCount: Int, char2UInt8: [Character: UInt8]) throws {
         // MARK: `.pause`ファイルが存在する場合、`merge`を行う前に`.2`ファイルの復活を試み、失敗した場合は`merge`を諦める。
         if fileExist(pauseFileURL(directoryURL: directoryURL)) {
