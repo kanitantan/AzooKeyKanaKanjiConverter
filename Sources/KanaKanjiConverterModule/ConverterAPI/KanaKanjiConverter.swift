@@ -775,7 +775,7 @@ public final class KanaKanjiConverter {
     ///   重複のない変換候補。
     /// - Note:
     ///   現在の実装は非常に複雑な方法で候補の順序を決定している。
-    private func processResult(inputData: ComposingText, result: (result: LatticeNode, lattice: Lattice), options: ConvertRequestOptions) -> ConversionResult {
+    private func processResult(inputData: ComposingText, result: (result: LatticeNode, lattice: Lattice), options: ConvertRequestOptions, zenzaiSupplement: [Candidate] = []) -> ConversionResult {
         self.updateCurrentSessionState {
             $0.previousInputData = inputData
             $0.lattice = result.lattice
@@ -991,8 +991,19 @@ public final class KanaKanjiConverter {
             }
         }
 
+        let wholeSentenceCount = result.count
         result.append(contentsOf: consume firstClauseCandidates)
         result.append(contentsOf: consume wordCandidates)
+
+        // azuki patch: see ZenzaiWholeSentenceSupplement
+        if options.zenzaiMode.enabled, !zenzaiSupplement.isEmpty {
+            result = ZenzaiWholeSentenceSupplement.merge(
+                result,
+                wholeSentenceCount: wholeSentenceCount,
+                supplement: zenzaiSupplement,
+                inputData: inputData
+            )
+        }
 
         result.mutatingForEach { item in
             item.withActions(self.getAppropriateActions(item))
@@ -1019,7 +1030,9 @@ public final class KanaKanjiConverter {
     ///   - N_best: 計算途中で保存する候補数。実際に得られる候補数とは異なる。
     /// - Returns:
     ///   結果のラティスノードと、計算済みノードの全体
-    private func convertToLattice(_ inputData: ComposingText, N_best: Int, zenzaiMode: ConvertRequestOptions.ZenzaiMode, needTypoCorrection: Bool) -> (result: LatticeNode, lattice: Lattice)? {
+    ///   - zenzaiSupplement: azuki patch: receives the ZenzaiWholeSentenceSupplement
+    ///     of this request (left empty unless Zenzai collected one).
+    private func convertToLattice(_ inputData: ComposingText, N_best: Int, zenzaiMode: ConvertRequestOptions.ZenzaiMode, needTypoCorrection: Bool, zenzaiSupplement: inout [Candidate]) -> (result: LatticeNode, lattice: Lattice)? {
         if inputData.convertTarget.isEmpty {
             return nil
         }
@@ -1040,6 +1053,31 @@ public final class KanaKanjiConverter {
                 $0.previousInputData = inputData
                 $0.zenzaiCache = cache
             }
+            // azuki patch: collect the whole-sentence supplement (see
+            // ZenzaiWholeSentenceSupplement) by re-running the plain N-best
+            // search on the lattice Zenzai already built (dictionary lookups
+            // reused, no inference). Only with the cursor at the end, where the
+            // lattice covers the whole input. The returned EOS node holds its own
+            // RegisteredNode chains, so resetting node states here does not touch
+            // it, and the Zenzai cache resets them before reuse.
+            guard inputData.isAtEndIndex,
+                  ZenzaiWholeSentenceSupplement.shouldCollect(surfaceCount: inputData.convertTarget.count) else {
+                return (result, nodes)
+            }
+            var supplementLattice = nodes
+            supplementLattice.resetNodeStates()
+            let supplement = self.converter.kana2lattice_all(
+                inputData,
+                N_best: ZenzaiWholeSentenceSupplement.nBest,
+                needTypoCorrection: false,
+                preprocessedLattice: supplementLattice,
+                dicdataStoreState: self.dicdataStoreState
+            )
+            zenzaiSupplement = self.getUniqueCandidate(
+                supplement.result.getCandidateData()
+                    .map(self.converter.processClauseCandidate)
+                    .sorted { $0.value > $1.value }
+            )
             return (result, nodes)
         }
 
@@ -1132,11 +1170,14 @@ public final class KanaKanjiConverter {
         self.dicdataStoreState.updateIfRequired(options: options)
         let needTypoCorrection = self.isClassicTypoCorrectionEnabled(options)
 
-        guard let result = self.convertToLattice(inputData, N_best: options.N_best, zenzaiMode: options.zenzaiMode, needTypoCorrection: needTypoCorrection) else {
+        // azuki patch: request-local, so a nested request (prediction through
+        // withScratchSession) cannot replace the outer request's supplement
+        var zenzaiSupplement: [Candidate] = []
+        guard let result = self.convertToLattice(inputData, N_best: options.N_best, zenzaiMode: options.zenzaiMode, needTypoCorrection: needTypoCorrection, zenzaiSupplement: &zenzaiSupplement) else {
             return ConversionResult(mainResults: [], predictionResults: [], englishPredictionResults: [], firstClauseResults: [])
         }
 
-        return self.processResult(inputData: inputData, result: result, options: options)
+        return self.processResult(inputData: inputData, result: result, options: options, zenzaiSupplement: zenzaiSupplement)
     }
 
     private func isClassicTypoCorrectionEnabled(_ options: ConvertRequestOptions) -> Bool {
