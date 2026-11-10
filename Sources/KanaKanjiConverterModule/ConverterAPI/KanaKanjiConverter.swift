@@ -354,6 +354,22 @@ public final class KanaKanjiConverter {
         self.dicdataStoreState.importDynamicUserDictionary(dicdata, shortcuts: shortcuts)
     }
 
+    /// azuki patch: replaces the set of (reading, word) pairs never offered
+    /// (see `SuppressedEntry`); `[]` clears it. Readings may be hiragana or
+    /// katakana. When the normalized policy actually changes, every conversion
+    /// session and cache is dropped (`stopComposition()`), because lattices
+    /// built under the old policy may still hold suppressed nodes.
+    /// - Returns: whether the policy changed. Callers holding candidates from
+    ///   before the change should discard them.
+    @discardableResult
+    public func setSuppressedEntries(_ entries: [SuppressedEntry]) -> Bool {
+        guard self.dicdataStoreState.setSuppressedEntries(entries) else {
+            return false
+        }
+        self.stopComposition()
+        return true
+    }
+
     public func updateUserDictionaryURL(_ newURL: URL, forceReload: Bool = false) {
         self.dicdataStoreState.updateUserDictionaryURL(newURL, forceReload: forceReload)
     }
@@ -763,6 +779,10 @@ public final class KanaKanjiConverter {
             candidates.append(halfWidthKatakana)
         }
 
+        // azuki patch: these whole-input forms are generated here, not looked
+        // up, so the lattice filter never sees them; honor the policy for
+        // their (ruby, word) as well (e.g. (けして, けして) hides the raw kana)
+        candidates.removeAll { $0.data.contains(where: self.dicdataStoreState.isSuppressed) }
         return candidates
     }
 

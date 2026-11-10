@@ -214,11 +214,16 @@ public final class DicdataStore {
     /// - Returns: 完全一致の`DicdataElement`配列
     func getPerfectMatchedUserShortcutsDicdata(ruby: some StringProtocol, state: DicdataStoreState) -> [DicdataElement] {
         let rubyString = String(ruby)
-        var results = state.dynamicUserShortcuts.filter { $0.ruby == rubyString }
+        // azuki patch: shortcuts bypass the lattice, and the early return
+        // below hands back the dynamic shortcuts alone, so filter both paths
+        var results = state.dynamicUserShortcuts.filter { $0.ruby == rubyString && !state.isSuppressed($0) }
         let charIDs = rubyString.map(self.character2charId(_:))
         let indices = self.perfectMatchingSearch(query: "user_shortcuts", charIDs: charIDs, state: state)
         guard !indices.isEmpty else { return results }
-        results.append(contentsOf: self.getDicdataFromLoudstxt3(identifier: "user_shortcuts", indices: indices, state: state))
+        results.append(
+            contentsOf: self.getDicdataFromLoudstxt3(identifier: "user_shortcuts", indices: indices, state: state)
+                .filter { !state.isSuppressed($0) }
+        )
         return results
     }
 
@@ -551,6 +556,12 @@ public final class DicdataStore {
         var latticeNodes: [LatticeNode] = []
         let needBOS = inputRange?.startIndex == .zero || surfaceRange?.startIndex == .zero
         func appendNode(_ element: consuming DicdataElement, endIndex: Lattice.LatticeIndex) {
+            // azuki patch: every fresh lexical node (additional, LOUDS and
+            // wise entries) passes here, so a suppressed pair never enters
+            // the lattice and the search re-routes around it
+            if state.isSuppressed(element) {
+                return
+            }
             let range: Lattice.LatticeRange = switch endIndex {
             case .input(let endIndex): .input(from: (inputRange?.startIndex)!, to: endIndex + 1)
             case .surface(let endIndex): .surface(from: (surfaceRange?.startIndex)!, to: endIndex + 1)
@@ -693,6 +704,8 @@ public final class DicdataStore {
             result.append(contentsOf: self.getDicdataFromLoudstxt3(identifier: "memory", indices: Set(consume memoryDictIndices), state: state))
             result.append(contentsOf: state.learningMemoryManager.temporaryPrefixMatch(charIDs: charIDs))
         }
+        // azuki patch: prediction bypasses the lattice
+        result.removeAll(where: state.isSuppressed)
         return result
     }
 

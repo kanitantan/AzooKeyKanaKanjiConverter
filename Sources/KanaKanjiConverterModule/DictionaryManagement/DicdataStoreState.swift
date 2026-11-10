@@ -14,6 +14,9 @@ package final class DicdataStoreState {
     private(set) var dynamicUserDictionaryByRuby: [String: [DicdataElement]] = [:]
     private(set) var dynamicUserDictionarySortedRubies: [String] = []
     private(set) var dynamicUserShortcuts: [DicdataElement] = []
+    // azuki patch: (ruby, word) pairs never offered, keyed by katakana ruby
+    // (see SuppressedEntry). Empty in the common case, checked first.
+    private(set) var suppressedWordsByRuby: [String: Set<String>] = [:]
     var learningMemoryManager: LearningManager
 
     var userDictionaryURL: URL?
@@ -90,6 +93,25 @@ package final class DicdataStoreState {
         self.dynamicUserShortcuts.mutatingForEach {
             $0.metadata = .isFromUserDictionary
         }
+    }
+
+    /// Replaces the suppression policy. Returns whether it actually changed,
+    /// so the caller can drop conversion caches built under the old policy.
+    func setSuppressedEntries(_ entries: [SuppressedEntry]) -> Bool {
+        let policy = SuppressedEntry.policy(from: entries)
+        guard policy != self.suppressedWordsByRuby else {
+            return false
+        }
+        self.suppressedWordsByRuby = policy
+        return true
+    }
+
+    @inline(__always)
+    func isSuppressed(_ element: DicdataElement) -> Bool {
+        if self.suppressedWordsByRuby.isEmpty {
+            return false
+        }
+        return self.suppressedWordsByRuby[element.ruby]?.contains(element.word) ?? false
     }
 
     private func resetMemoryLOUDSCache() {
