@@ -370,6 +370,56 @@ public final class KanaKanjiConverter {
         return true
     }
 
+    /// azuki patch (testing only): runs the Zenzai constrained lattice search
+    /// once, without a model, on a fresh lattice, so `ZenzaiMarkBoundary` can be
+    /// checked on real dictionary paths (system, learned, user dictionary) and
+    /// with either bypass flag. `constraint` is raw bytes, so a constraint that
+    /// ends inside a character can be expressed.
+    @_spi(AzukiTesting) public func constrainedCandidatesForTesting(
+        _ inputData: ComposingText,
+        constraint: [UInt8],
+        hasEOS: Bool = false,
+        ignoreMemoryAndUserDictionary: Bool = false,
+        options: ConvertRequestOptions
+    ) -> [Candidate] {
+        self.dicdataStoreState.updateIfRequired(options: options)
+        let draft = self.converter.kana2lattice_all_with_prefix_constraint(
+            inputData,
+            N_best: 3,
+            constraint: .init(constraint, hasEOS: hasEOS, ignoreMemoryAndUserDictionary: ignoreMemoryAndUserDictionary),
+            dicdataStoreState: self.dicdataStoreState
+        )
+        return draft.result.getCandidateData().map(self.converter.processClauseCandidate)
+    }
+
+    /// azuki patch (testing only): one Zenzai conversion that starts from the
+    /// given cached constraint, as if the previous request had left it, with
+    /// the given inference budget and a fresh lattice. Needs the model named by
+    /// `options.zenzaiMode`; returns nil when it is off or cannot be loaded.
+    @_spi(AzukiTesting) public func zenzaiCandidatesForTesting(
+        _ inputData: ComposingText,
+        cachedConstraint: [UInt8],
+        inferenceLimit: Int,
+        options: ConvertRequestOptions
+    ) -> [Candidate]? {
+        guard options.zenzaiMode.enabled, let model = self.getModel(modelURL: options.zenzaiMode.weightURL) else {
+            return nil
+        }
+        self.dicdataStoreState.updateIfRequired(options: options)
+        let cache = Kana2Kanji.ZenzaiCache(inputData, constraint: .init(cachedConstraint), satisfyingCandidate: nil)
+        let (result, _, _) = self.converter.all_zenzai(
+            inputData,
+            zenz: model,
+            zenzaiCache: cache,
+            inferenceLimit: inferenceLimit,
+            requestRichCandidates: false,
+            personalizationMode: nil,
+            versionDependentConfig: options.zenzaiMode.versionDependentMode,
+            dicdataStoreState: self.dicdataStoreState
+        )
+        return result.getCandidateData().map(self.converter.processClauseCandidate)
+    }
+
     public func updateUserDictionaryURL(_ newURL: URL, forceReload: Bool = false) {
         self.dicdataStoreState.updateUserDictionaryURL(newURL, forceReload: forceReload)
     }

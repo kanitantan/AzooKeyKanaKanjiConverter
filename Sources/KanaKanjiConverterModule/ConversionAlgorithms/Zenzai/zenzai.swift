@@ -134,6 +134,18 @@ extension Kana2Kanji {
                 }
             }
             guard var (index, candidate) = best else {
+                // azuki patch: a constraint carried over from the previous
+                // request (or one ZenzaiMarkBoundary leaves unsatisfiable) used
+                // to end the request with no Zenzai candidate at all, although
+                // the intent is to ignore an unsatisfiable constraint. Before
+                // anything was inserted, run the unconstrained draft once on the
+                // same lattice instead; no inference is spent here, and the
+                // empty constraint cannot re-enter this branch. Codex 01a1c369.
+                if insertedCandidates.isEmpty, !constraint.isEmpty {
+                    debug("no draft satisfies \(constraint); retrying without the constraint")
+                    constraint = PrefixConstraint([])
+                    continue
+                }
                 debug("best was not found!")
                 // Emptyの場合
                 // 制約が満たせない場合は無視する
@@ -190,7 +202,12 @@ extension Kana2Kanji {
                                 lattice.resetNodeStates()
                                 let draftResult = self.kana2lattice_all_with_prefix_constraint(latticeInputData, N_best: 3, constraint: normalizedAlternativeConstraint, preprocessedLattice: lattice, dicdataStoreState: dicdataStoreState)
                                 let candidates = draftResult.result.getCandidateData().map(self.processClauseCandidate)
-                                let best: (Int, Candidate)? = candidates.enumerated().reduce(into: (Int, Candidate)?.none) { best, pair in
+                                // azuki patch: the fresh search is not reviewed by the model, so
+                                // check the mark rule on its results as well (ZenzaiMarkBoundary)
+                                let best: (Int, Candidate)? = candidates.enumerated().filter {
+                                    normalizedAlternativeConstraint.hasEOS
+                                        || !ZenzaiMarkBoundary.text($0.1.text, marksBoundaryOf: normalizedAlternativeConstraint.constraint)
+                                }.reduce(into: (Int, Candidate)?.none) { best, pair in
                                     if let (_, c) = best, pair.1.value > c.value {
                                         best = pair
                                     } else if best == nil {
@@ -358,7 +375,10 @@ extension Kana2Kanji {
         if constraint.hasEOS {
             return candidate.text.utf8.elementsEqual(constraint.constraint)
         } else {
+            // azuki patch: a (han)dakuten mark must not complete the
+            // constraint (一休ロ゜ for 一休ロ), see ZenzaiMarkBoundary
             return candidate.text.utf8.hasPrefix(constraint.constraint)
+                && !ZenzaiMarkBoundary.text(candidate.text, marksBoundaryOf: constraint.constraint)
         }
     }
 

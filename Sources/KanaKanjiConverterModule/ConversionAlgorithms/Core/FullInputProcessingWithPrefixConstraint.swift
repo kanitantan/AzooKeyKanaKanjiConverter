@@ -145,6 +145,15 @@ extension Kana2Kanji {
                     }
                     let cLen = constraintBytes.count
                     for index in node.prevs.indices {
+                        // azuki patch: a (han)dakuten mark must not complete the
+                        // constraint (ZenzaiMarkBoundary), whatever the source of
+                        // the node, so this runs before the bypass below
+                        if !constraint.hasEOS, cLen > 0 {
+                            let (matched, total) = mtPerPrev[index]
+                            if matched == cLen, ZenzaiMarkBoundary.word(node.data.word, startingAt: total - node.data.word.utf8.count, marksBoundary: cLen) {
+                                continue
+                            }
+                        }
                         // 学習データやユーザ辞書由来の場合は素通しする
                         if !constraint.ignoreMemoryAndUserDictionary, node.data.metadata.isDisjoint(with: [.isLearned, .isFromUserDictionary]) {
                             let (matched, total) = mtPerPrev[index]
@@ -179,6 +188,28 @@ extension Kana2Kanji {
                             let lastindex: Int = (nextnode.prevs.lastIndex(where: {$0.totalValue >= newValue}) ?? -1) + 1
                             if lastindex == N_best {
                                 continue
+                            }
+                            // azuki patch: reject the path before it takes an N-best
+                            // slot when a (han)dakuten mark completes the constraint
+                            // (ZenzaiMarkBoundary). The boundary scalar sits in node's
+                            // word when the path to node already covers the
+                            // constraint, otherwise in nextnode's word. Independent
+                            // of the learned/user bypass below.
+                            if !constraint.hasEOS, cLen > 0 {
+                                let (matchedPrev, totalPrev) = mtPerPrev[index]
+                                if matchedPrev == cLen {
+                                    let nodeStart = totalPrev - node.data.word.utf8.count
+                                    if ZenzaiMarkBoundary.word(node.data.word, startingAt: nodeStart, marksBoundary: cLen)
+                                        || ZenzaiMarkBoundary.word(nextnode.data.word, startingAt: totalPrev, marksBoundary: cLen) {
+                                        continue
+                                    }
+                                } else if matchedPrev == totalPrev {
+                                    let (matchedExt, mismatch) = self.extendMatched(matched: matchedPrev, nextWord: nextnode.data.word, constraintBytes: constraintBytes)
+                                    if !mismatch, matchedExt == cLen,
+                                       ZenzaiMarkBoundary.word(nextnode.data.word, startingAt: totalPrev, marksBoundary: cLen) {
+                                        continue
+                                    }
+                                }
                             }
                             // 制約チェックは重いので、必要なものに対してのみ行う
                             // common prefixが単語か制約のどちらかに一致している必要
